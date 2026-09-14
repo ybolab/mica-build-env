@@ -1,0 +1,58 @@
+name: release
+# Runs only when a release is published (`gh release create <YYYYMMDD-HHMM>
+# --target <commit>`). Builds from the release's tag: the images job pushes the
+# build-env images the tagged commit's inputs name (nothing already published is
+# rebuilt), then the assets job attaches the generated build-env-image.lock and
+# SHA256SUMS to that release.
+on:
+  release:
+    types: [published]
+permissions:
+  contents: read
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ github.event.release.tag_name }}
+      - name: The tag is a time YYYYMMDD-HHMM
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: '[[ "${TAG}" =~ ^[0-9]{8}-[0-9]{4}$ ]] || { echo "error: the tag ${TAG} is not YYYYMMDD-HHMM" >&2; exit 1; }'
+      - name: Emulation for the arm64 builds
+        uses: docker/setup-qemu-action@v4
+      - name: Publish what these inputs do not have yet
+        run: |
+          set -euo pipefail
+          printf '%s' "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          # The env goes outside the checkout: publish-images.sh refuses a dirty tree.
+          bash publish-images.sh --out "$RUNNER_TEMP/build-env-image.lock"
+          {
+            echo "Generated build-env-image.lock:"
+            echo '```'
+            cat "$RUNNER_TEMP/build-env-image.lock"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+  assets:
+    needs: images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ github.event.release.tag_name }}
+          fetch-depth: 0
+      - name: Attach the assets to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: bash publish-release.sh "${TAG}"

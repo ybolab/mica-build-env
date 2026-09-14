@@ -1,0 +1,6 @@
+# Allow-list: only the filtered lock and the scripts the Dockerfile mounts.
+*
+!images.lock
+!fetch.sh
+!install-linker.sh
+!assert.sh
